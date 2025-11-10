@@ -24,3 +24,17 @@ body {
   color: var(--foreground);
   font-family: Arial, Helvetica, sans-serif;
 }
+
+/* 响应式优化：确保在小屏幕上文本可读性 */
+@media (max-width: 640px) {
+  body {
+    -webkit-text-size-adjust: 100%;
+    text-size-adjust: 100%;
+  }
+}
+
+/* 确保长文本在移动设备上正确换行 */
+* {
+  word-wrap: break-word;
+  overflow-wrap: break-word;
+}

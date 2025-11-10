@@ -34,8 +34,13 @@ An experimental Next.js application that demonstrates how to migrate a MetaMask 
 # 1. Install dependencies
 bun install
 
-# 2. (Optional) create a .env file
-echo "NEXT_PUBLIC_INFURA_API_KEY=your_infura_project_id" >> .env.local
+# 2. Create a .env.local file with your API keys
+# Copy .env.example to .env.local and fill in your API keys:
+cp .env.example .env.local
+# Then edit .env.local and add your Moralis API keys:
+# - NEXT_PUBLIC_MORALIS_PRIMARY_API_KEY=your_primary_api_key
+# - NEXT_PUBLIC_MORALIS_FALLBACK_API_KEY=your_fallback_api_key
+# Optional: NEXT_PUBLIC_INFURA_API_KEY=your_infura_project_id
 
 # 3. Launch the dev server
 bun run dev
@@ -74,19 +79,26 @@ The UI guides you through connecting MetaMask, selecting a supported chain (Ethe
 
 - **RPC configuration** – Update `src/providers/AppProvider.tsx` to add or remove supported chains or swap out RPC transports.
 - **Gas defaults** – `AssetChecker` contains chain-specific gas price heuristics you can adjust to match production requirements.
-- **Moralis integration** – The Asset Checker fetches ERC-20 balances using pre-configured API keys. Replace these with environment-managed secrets for production.
+- **Moralis integration** – The Asset Checker fetches ERC-20 balances using API keys configured via environment variables. Set `NEXT_PUBLIC_MORALIS_PRIMARY_API_KEY` and `NEXT_PUBLIC_MORALIS_FALLBACK_API_KEY` in your `.env.local` file. See `.env.example` for the template.
 - **Target address** – The batch transfer currently uses a hard-coded recipient. Wire the “Transfer to Address” input into the transaction generator if you need dynamic targets.
 
 ## Deployment
 
 1. Run `bun run build` to generate the production bundle in `.next/`.
 2. Serve with `bun run start` (defaults to port 3000) or deploy to any Next.js-compatible host (Vercel, Netlify, Fly.io, etc.).
-3. Ensure environment variables (`NEXT_PUBLIC_INFURA_API_KEY`, Moralis keys) are configured in your hosting provider.
+3. Ensure environment variables are configured in your hosting provider:
+   - `NEXT_PUBLIC_MORALIS_PRIMARY_API_KEY` - Your primary Moralis API key
+   - `NEXT_PUBLIC_MORALIS_FALLBACK_API_KEY` - Your fallback Moralis API key
+   - `NEXT_PUBLIC_MORALIS_BASE_URL` - (Optional) Moralis API base URL
+   - `NEXT_PUBLIC_INFURA_API_KEY` - (Optional) Infura API key
 
 ## Troubleshooting
 
 - **MetaMask connection issues**: Ensure you are running HTTPS (or `localhost`) and that the MetaMask extension is unlocked.
-- **Asset queries fail**: Verify your Moralis API quota and that the selected chain is supported by the Moralis endpoint.
+- **Asset queries fail**: 
+  - Verify that `NEXT_PUBLIC_MORALIS_PRIMARY_API_KEY` and `NEXT_PUBLIC_MORALIS_FALLBACK_API_KEY` are set in your `.env.local` file
+  - Check your Moralis API quota and that the selected chain is supported by the Moralis endpoint
+  - Ensure you've restarted the dev server after adding environment variables
 - **Transactions revert despite pre-check**: Remember that `eth_call` simulates state at the time of preview. On-chain state changes (e.g., balance fluctuations or allowance updates) can still cause reverts at submission time.
 - **Unsupported chains**: Only the five chains listed above are wired into the UI. Update `SUPPORTED_CHAINS` and supporting lookup maps if you add more networks.
 

